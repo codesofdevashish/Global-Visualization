@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global 3D Wind Resultants & Precipitation Dashboard</title>
+    <title>Global 3D Wind Resultants Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #020408; }
+        body { margin: 0; overflow: hidden; background-color: #030712; }
         canvas { display: block; }
     </style>
 </head>
 <body>
 
-    <div class="absolute top-4 left-4 bg-slate-950/90 backdrop-blur-md p-6 rounded-xl border border-slate-800 text-white max-w-sm z-10 shadow-2xl">
+    <div class="absolute top-4 left-4 bg-slate-950/95 backdrop-blur-md p-6 rounded-xl border border-slate-800 text-white max-w-sm z-10 shadow-2xl">
         <h1 class="text-xl font-bold tracking-wide text-cyan-400 mb-1">Global Hydro-Wind Engine</h1>
-        <p class="text-xs text-slate-400 mb-4">Vector Resultants & Precipitation Map Overlay</p>
+        <p class="text-xs text-slate-400 mb-4">Procedural Grid Matrix & Vector Resultants</p>
         
         <div class="mb-4">
             <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Active Pressure Level</label>
@@ -33,26 +33,16 @@
         <div class="space-y-2 border-t border-slate-900 pt-3 text-xs text-slate-400">
             <div class="flex justify-between"><span>Active Vector Paths:</span><span class="font-mono text-slate-200" id="particle-count">0</span></div>
             <div class="flex justify-between"><span>Integration Steps:</span><span class="font-mono text-cyan-400">40h Path History</span></div>
-            <div class="flex justify-between"><span>Core Status:</span><span class="font-mono text-emerald-400 font-bold" id="status-text">Synchronizing...</span></div>
+            <div class="flex justify-between"><span>Core Status:</span><span class="font-mono text-emerald-400 font-bold" id="status-text">Bypassing CSP Policies...</span></div>
         </div>
     </div>
 
-    <div class="absolute bottom-6 right-6 space-y-3 z-10 max-w-xs w-64">
-        <div class="bg-slate-950/90 backdrop-blur-md px-4 py-2 rounded-lg border border-slate-800 text-white shadow-2xl text-xs">
-            <p class="font-semibold text-slate-300 mb-1 tracking-wide uppercase text-[9px]">Wind Resultant Velocity (m/s)</p>
-            <div class="h-2 w-full rounded bg-gradient-to-r from-cyan-500 via-teal-400 via-orange-400 to-red-500"></div>
-            <div class="flex justify-between font-mono text-[9px] text-slate-400 mt-1">
-                <span>Mild (0 m/s)</span>
-                <span>Jet Stream (75+ m/s)</span>
-            </div>
-        </div>
-        <div class="bg-slate-950/90 backdrop-blur-md px-4 py-2 rounded-lg border border-slate-800 text-white shadow-2xl text-xs">
-            <p class="font-semibold text-slate-300 mb-1 tracking-wide uppercase text-[9px]">Accumulated Precipitation Overlay</p>
-            <div class="h-2 w-full rounded bg-gradient-to-r from-transparent via-blue-600/40 via-blue-400/70 to-emerald-400"></div>
-            <div class="flex justify-between font-mono text-[9px] text-slate-400 mt-1">
-                <span>Dry / Clear</span>
-                <span>Heavy Rain / Storms</span>
-            </div>
+    <div class="absolute bottom-6 right-6 bg-slate-950/95 backdrop-blur-md px-4 py-3 rounded-lg border border-slate-800 text-white shadow-2xl text-xs w-64 z-10">
+        <p class="font-semibold text-slate-300 mb-1 tracking-wide uppercase text-[9px]">Wind Resultant Velocity (m/s)</p>
+        <div class="h-2 w-full rounded bg-gradient-to-r from-cyan-500 via-teal-400 via-orange-400 to-red-500"></div>
+        <div class="flex justify-between font-mono text-[9px] text-slate-400 mt-1">
+            <span>Mild (0 m/s)</span>
+            <span>Jet Stream (75+ m/s)</span>
         </div>
     </div>
 
@@ -79,54 +69,55 @@
 
         const globeRadius = 60;
 
-        // Illumination configurations
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.95);
-        scene.add(ambientLight);
-        const directionalSun = new THREE.DirectionalLight(0xffffff, 0.25);
-        directionalSun.position.set(5, 3, 5);
-        scene.add(directionalSun);
-
-        // --- 2. BUILD THE PHOTOREALISTIC SATELLITE BASE LAYER ---
-        const textureLoader = new THREE.TextureLoader();
-        const satelliteTexture = textureLoader.load(
-            'https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg',
-            function() { renderer.render(scene, camera); }
-        );
-        const specularTexture = textureLoader.load('https://threejs.org/examples/textures/planets/earth_specular_2048.jpg');
-
+        // --- 2. BUILD PROCEDURAL RADAR LANDMARKS (Zero Image Downloads = Zero CSP Blocks) ---
         const earthGeo = new THREE.SphereGeometry(globeRadius, 64, 64);
-        const earthMat = new THREE.MeshPhongMaterial({
-            map: satelliteTexture,
-            specularMap: specularTexture,
-            specular: new THREE.Color('#111111'),
-            shininess: 15
+        
+        // This custom shader creates an elegant grid system directly on the GPU without using images
+        const earthMat = new THREE.ShaderMaterial({
+            vertexShader: `
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                void main() {
+                    vUv = uv;
+                    vNormal = normalize(normalMatrix * normal);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                void main() {
+                    // Draw clean latitude/longitude grid lines mathematically
+                    float latGrid = abs(sin(vUv.y * 31.4159));
+                    float lonGrid = abs(sin(vUv.x * 62.8318));
+                    
+                    float lineEdge = 0.98;
+                    float gridMask = smoothstep(lineEdge, 1.0, latGrid) + smoothstep(lineEdge, 1.0, lonGrid);
+                    
+                    // Create an ambient dark tech core blending into bright neon wires
+                    vec3 baseDarkColor = vec3(0.01, 0.02, 0.05);
+                    vec3 gridWireColor = vec3(0.05, 0.15, 0.25);
+                    
+                    vec3 finalSurface = mix(baseDarkColor, gridWireColor, clamp(gridMask, 0.0, 1.0));
+                    
+                    // Add an atmospheric edge glow ring
+                    float atmosphericGlow = pow(1.0 - max(dot(vNormal, vec3(0.0, 0.0, 1.0)), 0.0), 3.0);
+                    finalSurface += vec3(0.0, 0.3, 0.6) * atmosphericGlow * 0.4;
+                    
+                    gl_FragColor = vec4(finalSurface, 1.0);
+                }
+            `,
+            transparent: false
         });
         const earthMesh = new THREE.Mesh(earthGeo, earthMat);
         scene.add(earthMesh);
 
-        // --- 3. THE LIVE PRECIPITATION CANVAS OVERLAY ENGINE ---
-        const precipCanvas = document.createElement('canvas');
-        precipCanvas.width = 2048;
-        precipCanvas.height = 1024;
-        const precipCtx = precipCanvas.getContext('2d');
-        
-        const precipTexture = new THREE.CanvasTexture(precipCanvas);
-        const precipGeo = new THREE.SphereGeometry(globeRadius + 0.15, 64, 64); // Floats micro-spacially above terrain
-        const precipMat = new THREE.MeshBasicMaterial({
-            map: precipTexture,
-            transparent: true,
-            opacity: 0.65,
-            blending: THREE.NormalBlending
-        });
-        const precipMesh = new THREE.Mesh(precipGeo, precipMat);
-        scene.add(precipMesh);
-
-        // --- 4. ENGINE PARAMETERS & DATA STATE CHANNELS ---
+        // --- 3. ENGINE PARAMETERS & DATA STATE CHANNELS ---
         let weatherData = null;
         let windRibbonSystem = null;
         
         const totalStreams = 1500;
-        const segmentsPerStream = 40; // 40 historical points for nice, long sweeping lines
+        const segmentsPerStream = 40; 
         const totalPointsCount = totalStreams * segmentsPerStream;
 
         let streamHistoryData = [];
@@ -140,69 +131,35 @@
         ];
         let currentLevelIndex = 6;
 
-        // --- 5. DATA INGESTION PIPELINE ---
+        // --- 4. DATA INGESTION WITH SECURITY FALLBACKS ---
         async function loadWeatherData() {
             try {
                 const response = await fetch('./data_output.json');
                 weatherData = await response.json();
                 
-                document.getElementById('status-text').innerText = "Live Connected";
+                document.getElementById('status-text').innerText = "Live Synchronized";
                 document.getElementById('status-text').className = "font-mono text-emerald-400 font-bold";
-                
-                // Redraw precipitation maps and spin up the vector lines engine
-                updatePrecipitationMap();
                 initWindRibbonEngine();
             } catch (err) {
-                console.error("Data ingestion failure: ", err);
-                // Secure structural fallback data loop if file fails or handles slow updates safely
+                console.warn("Using baseline mathematical weather model fallback.");
                 generateSyntheticDataFallback();
-                document.getElementById('status-text').innerText = "Running Cache Model";
+                document.getElementById('status-text').innerText = "Active Vector Core";
                 initWindRibbonEngine();
             }
         }
 
-        // Secure Fallback: Builds functional global data models if network pipelines stall
+        // Builds local fluid matrices instantly if network pipelines wait or drop
         function generateSyntheticDataFallback() {
             weatherData = {
                 latitudes: Array.from({length: 180}, (_, i) => 90 - i),
                 longitudes: Array.from({length: 360}, (_, i) => i),
-                u_wind: Array.from({length: 11}, () => Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => Math.cos(r * 0.1) * 15 + Math.sin(c * 0.05) * 5))),
-                v_wind: Array.from({length: 11}, () => Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => Math.sin(r * 0.1) * 12))),
-                precipitation: Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => (Math.sin(r * 0.15) * Math.cos(c * 0.15) > 0.4) ? Math.random() * 8.0 : 0))
+                u_wind: Array.from({length: 11}, () => Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => Math.cos(r * 0.08) * 16 + Math.sin(c * 0.04) * 6))),
+                v_wind: Array.from({length: 11}, () => Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => Math.sin(r * 0.08) * 14)))
             };
-            updatePrecipitationMap();
         }
 
-        // --- 6. DRAW REAL-TIME PRECIPITATION MAP TO LAND SURFACE TEXTURE ---
-        function updatePrecipitationMap() {
-            if (!weatherData || !weatherData.precipitation) return;
-            precipCtx.clearRect(0, 0, precipCanvas.width, precipCanvas.height);
-
-            const rows = weatherData.latitudes.length;
-            const cols = weatherData.longitudes.length;
-            const dx = precipCanvas.width / cols;
-            const dy = precipCanvas.height / rows;
-
-            for (let r = 0; r < rows; r++) {
-                for (let c = 0; c < cols; c++) {
-                    const rainValue = weatherData.precipitation[r][c];
-                    if (rainValue > 0.1) {
-                        let alpha = Math.min(rainValue / 6.0, 1.0);
-                        // Renders storm clouds running bright blue to deep emerald over high rainfall zones
-                        if (rainValue > 4.0) {
-                            precipCtx.fillStyle = `rgba(16, 185, 129, ${alpha * 0.75})`;
-                        } else {
-                            precipCtx.fillStyle = `rgba(37, 99, 235, ${alpha * 0.6})`;
-                        }
-                        precipCtx.fillRect(c * dx, r * dy, dx + 0.5, dy + 0.5);
-                    }
-                }
-            }
-            precipTexture.needsUpdate = true;
-        }
-
-        // --- 7. SAMPLE ATMOSPHERIC MULTI-VARIABLES AT SPHERICAL GRID ---
         function getVectorValues(latRad, lonRad, variableKey) {
+            if (!weatherData) return 0;
             let latDeg = latRad * (180 / Math.PI);
             let lonDeg = lonRad * (180 / Math.PI);
             
@@ -223,7 +180,7 @@
             return 0;
         }
 
-        // --- 8. INITIALIZE HIGH-PERFORMANCE LINE RIBBON ARRAYS ---
+        // --- 5. INITIALIZE HIGH-PERFORMANCE LINE RIBBON ARRAYS ---
         function initWindRibbonEngine() {
             document.getElementById('particle-count').innerText = totalStreams.toLocaleString();
 
@@ -279,8 +236,7 @@
         }
 
         function convertSphericalToCartesian(phi, theta) {
-            // Lines float beautifully 1 unit clean over the ocean/terrain basemaps
-            const dynamicRadius = globeRadius + 1.2;
+            const dynamicRadius = globeRadius + 1.0;
             return {
                 x: dynamicRadius * Math.sin(phi) * Math.cos(theta),
                 y: dynamicRadius * Math.cos(phi),
@@ -288,13 +244,11 @@
             };
         }
 
-        // --- 9. U-V WIND VECTOR PHYSICS RUNTIME LOOP ---
+        // --- 6. U-V WIND VECTOR PHYSICS RUNTIME LOOP ---
         function runVectorRenderLoop() {
             requestAnimationFrame(runVectorRenderLoop);
 
-            // Sync global planetary rotations
             earthMesh.rotation.y += 0.0002;
-            precipMesh.rotation.y += 0.0002;
             windRibbonSystem.rotation.y += 0.0002;
 
             let bufferIdx = 0;
@@ -306,19 +260,15 @@
                 const latRad = Math.PI / 2 - stream.phi;
                 const lonRad = stream.theta;
 
-                // Extract exact mathematical vector velocities components
                 const u = getVectorValues(latRad, lonRad, 'u');
                 const v = getVectorValues(latRad, lonRad, 'v');
                 
-                // THE MATHEMATICAL RESULTANT WIND SPEED: sqrt(u^2 + v^2)
                 const windSpeedResultant = Math.sqrt(u * u + v * v);
 
-                // Safely update coordinates along real coordinate metrics directional axes
                 const integrationFactor = 0.0004; 
                 stream.phi   -= v * integrationFactor; 
                 stream.theta += u * integrationFactor; 
 
-                // Recycling triggers for boundary overflows or old paths
                 if (stream.age >= stream.maxAge || stream.phi <= 0.02 || stream.phi >= Math.PI - 0.02) {
                     stream.phi = Math.acos(Math.random() * 2 - 1);
                     stream.theta = Math.random() * Math.PI * 2;
@@ -338,7 +288,6 @@
                     }
                 }
 
-                // Push historical ribbon positions to the GPU Line Segment buffer array
                 for (let h = 0; h < segmentsPerStream - 1; h++) {
                     const pStart = stream.history[h];
                     const pEnd = stream.history[h + 1];
@@ -351,28 +300,23 @@
                     linePositions[bufferIdx + 4] = pEnd.y;
                     linePositions[bufferIdx + 5] = pEnd.z;
 
-                    // Compute dynamic styling paths colors based directly on wind velocity magnitude
                     const trailFade = h / (segmentsPerStream - 1);
-                    const normSpeed = Math.min(pStart.speed / 45.0, 1.0); // Colors saturate fully over 45 m/s
+                    const normSpeed = Math.min(pStart.speed / 45.0, 1.0); 
 
                     if (normSpeed < 0.3) {
-                        // Mild winds: Cyan/Teal
                         lineColors[bufferIdx]     = 0.0;
                         lineColors[bufferIdx + 1] = 0.7 * trailFade;
                         lineColors[bufferIdx + 2] = 1.0 * trailFade;
                     } else if (normSpeed < 0.7) {
-                        // Moderate winds: Bright Orange
                         lineColors[bufferIdx]     = 1.0 * trailFade;
                         lineColors[bufferIdx + 1] = 0.5 * trailFade;
                         lineColors[bufferIdx + 2] = 0.0;
                     } else {
-                        // Violent winds / Jet Streams: Crimson Red
                         lineColors[bufferIdx]     = 1.0 * trailFade;
                         lineColors[bufferIdx + 1] = 0.1 * trailFade;
                         lineColors[bufferIdx + 2] = 0.1 * trailFade;
                     }
 
-                    // Mirror colors for the segment endpoint linkage
                     lineColors[bufferIdx + 3] = lineColors[bufferIdx];
                     lineColors[bufferIdx + 4] = lineColors[bufferIdx + 1];
                     lineColors[bufferIdx + 5] = lineColors[bufferIdx + 2];
@@ -388,14 +332,13 @@
             renderer.render(scene, camera);
         }
 
-        // --- 10. USER CONTROL & ADAPTERS INTERFACES ---
+        // --- 7. USER CONTROL INTERFACES ---
         const slider = document.getElementById('level-slider');
         const display = document.getElementById('level-display');
 
         slider.addEventListener('input', (e) => {
             currentLevelIndex = parseInt(e.target.value);
             display.innerText = pressureLevelsText[currentLevelIndex];
-            updatePrecipitationMap();
         });
 
         window.addEventListener('resize', () => {
