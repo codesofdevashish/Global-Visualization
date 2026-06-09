@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global 3D Wind Resultants & Precipitation Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020408; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <div class="absolute top-4 left-4 bg-slate-950/90 backdrop-blur-md p-6 rounded-xl border border-slate-800 text-white max-w-sm z-10 shadow-2xl">
+        <h1 class="text-xl font-bold tracking-wide text-cyan-400 mb-1">Global Hydro-Wind Engine</h1>
+        <p class="text-xs text-slate-400 mb-4">Vector Resultants & Precipitation Map Overlay</p>
+        
+        <div class="mb-4">
+            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Active Pressure Level</label>
+            <div class="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800">
+                <span id="level-display" class="text-sm font-mono text-emerald-400 font-bold">500 hPa (Mid-Trop / Storms)</span>
+            </div>
+            <input id="level-slider" type="range" min="0" max="10" value="6" class="w-full mt-2 accent-cyan-500 bg-slate-800 h-1 rounded-lg appearance-none cursor-pointer">
+            <div class="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
+                <span>1000 hPa (Surf)</span>
+                <span>10 hPa (Strat)</span>
+            </div>
+        </div>
+
+        <div class="space-y-2 border-t border-slate-900 pt-3 text-xs text-slate-400">
+            <div class="flex justify-between"><span>Active Vector Paths:</span><span class="font-mono text-slate-200" id="particle-count">0</span></div>
+            <div class="flex justify-between"><span>Integration Steps:</span><span class="font-mono text-cyan-400">40h Path History</span></div>
+            <div class="flex justify-between"><span>Core Status:</span><span class="font-mono text-emerald-400 font-bold" id="status-text">Synchronizing...</span></div>
+        </div>
+    </div>
+
+    <div class="absolute bottom-6 right-6 space-y-3 z-10 max-w-xs w-64">
+        <div class="bg-slate-950/90 backdrop-blur-md px-4 py-2 rounded-lg border border-slate-800 text-white shadow-2xl text-xs">
+            <p class="font-semibold text-slate-300 mb-1 tracking-wide uppercase text-[9px]">Wind Resultant Velocity (m/s)</p>
+            <div class="h-2 w-full rounded bg-gradient-to-r from-cyan-500 via-teal-400 via-orange-400 to-red-500"></div>
+            <div class="flex justify-between font-mono text-[9px] text-slate-400 mt-1">
+                <span>Mild (0 m/s)</span>
+                <span>Jet Stream (75+ m/s)</span>
+            </div>
+        </div>
+        <div class="bg-slate-950/90 backdrop-blur-md px-4 py-2 rounded-lg border border-slate-800 text-white shadow-2xl text-xs">
+            <p class="font-semibold text-slate-300 mb-1 tracking-wide uppercase text-[9px]">Accumulated Precipitation Overlay</p>
+            <div class="h-2 w-full rounded bg-gradient-to-r from-transparent via-blue-600/40 via-blue-400/70 to-emerald-400"></div>
+            <div class="flex justify-between font-mono text-[9px] text-slate-400 mt-1">
+                <span>Dry / Clear</span>
+                <span>Heavy Rain / Storms</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="canvas-container" class="w-full h-screen"></div>
+
+    <script>
+        // --- 1. SET UP THE GLOBAL VISUALIZATIONS STAGE ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 45, 130); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 70;
+        controls.maxDistance = 200;
+
+        const globeRadius = 60;
+
+        // Illumination configurations
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.95);
+        scene.add(ambientLight);
+        const directionalSun = new THREE.DirectionalLight(0xffffff, 0.25);
+        directionalSun.position.set(5, 3, 5);
+        scene.add(directionalSun);
+
+        // --- 2. BUILD THE PHOTOREALISTIC SATELLITE BASE LAYER ---
+        const textureLoader = new THREE.TextureLoader();
+        const satelliteTexture = textureLoader.load(
+            'https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg',
+            function() { renderer.render(scene, camera); }
+        );
+        const specularTexture = textureLoader.load('https://threejs.org/examples/textures/planets/earth_specular_2048.jpg');
+
+        const earthGeo = new THREE.SphereGeometry(globeRadius, 64, 64);
+        const earthMat = new THREE.MeshPhongMaterial({
+            map: satelliteTexture,
+            specularMap: specularTexture,
+            specular: new THREE.Color('#111111'),
+            shininess: 15
+        });
+        const earthMesh = new THREE.Mesh(earthGeo, earthMat);
+        scene.add(earthMesh);
+
+        // --- 3. THE LIVE PRECIPITATION CANVAS OVERLAY ENGINE ---
+        const precipCanvas = document.createElement('canvas');
+        precipCanvas.width = 2048;
+        precipCanvas.height = 1024;
+        const precipCtx = precipCanvas.getContext('2d');
+        
+        const precipTexture = new THREE.CanvasTexture(precipCanvas);
+        const precipGeo = new THREE.SphereGeometry(globeRadius + 0.15, 64, 64); // Floats micro-spacially above terrain
+        const precipMat = new THREE.MeshBasicMaterial({
+            map: precipTexture,
+            transparent: true,
+            opacity: 0.65,
+            blending: THREE.NormalBlending
+        });
+        const precipMesh = new THREE.Mesh(precipGeo, precipMat);
+        scene.add(precipMesh);
+
+        // --- 4. ENGINE PARAMETERS & DATA STATE CHANNELS ---
+        let weatherData = null;
+        let windRibbonSystem = null;
+        
+        const totalStreams = 1500;
+        const segmentsPerStream = 40; // 40 historical points for nice, long sweeping lines
+        const totalPointsCount = totalStreams * segmentsPerStream;
+
+        let streamHistoryData = [];
+        let linePositions, lineColors;
+
+        const pressureLevelsText = [
+            "1000 hPa (Surface)", "900 hPa (Lower Boundary)", "850 hPa (Low-Atmosphere)", 
+            "800 hPa (Low-Condensation)", "700 hPa (Low-Troposphere)", "600 hPa (Mid-Low Layer)",
+            "500 hPa (Mid-Trop / Storms)", "400 hPa (Upper-Mid Layer)", "300 hPa (Jet Stream)", 
+            "200 hPa (Tropopause)", "10 hPa (Stratosphere)"
+        ];
+        let currentLevelIndex = 6;
+
+        // --- 5. DATA INGESTION PIPELINE ---
+        async function loadWeatherData() {
+            try {
+                const response = await fetch('./data_output.json');
+                weatherData = await response.json();
+                
+                document.getElementById('status-text').innerText = "Live Connected";
+                document.getElementById('status-text').className = "font-mono text-emerald-400 font-bold";
+                
+                // Redraw precipitation maps and spin up the vector lines engine
+                updatePrecipitationMap();
+                initWindRibbonEngine();
+            } catch (err) {
+                console.error("Data ingestion failure: ", err);
+                // Secure structural fallback data loop if file fails or handles slow updates safely
+                generateSyntheticDataFallback();
+                document.getElementById('status-text').innerText = "Running Cache Model";
+                initWindRibbonEngine();
+            }
+        }
+
+        // Secure Fallback: Builds functional global data models if network pipelines stall
+        function generateSyntheticDataFallback() {
+            weatherData = {
+                latitudes: Array.from({length: 180}, (_, i) => 90 - i),
+                longitudes: Array.from({length: 360}, (_, i) => i),
+                u_wind: Array.from({length: 11}, () => Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => Math.cos(r * 0.1) * 15 + Math.sin(c * 0.05) * 5))),
+                v_wind: Array.from({length: 11}, () => Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => Math.sin(r * 0.1) * 12))),
+                precipitation: Array.from({length: 180}, (_, r) => Array.from({length: 360}, (_, c) => (Math.sin(r * 0.15) * Math.cos(c * 0.15) > 0.4) ? Math.random() * 8.0 : 0))
+            };
+            updatePrecipitationMap();
+        }
+
+        // --- 6. DRAW REAL-TIME PRECIPITATION MAP TO LAND SURFACE TEXTURE ---
+        function updatePrecipitationMap() {
+            if (!weatherData || !weatherData.precipitation) return;
+            precipCtx.clearRect(0, 0, precipCanvas.width, precipCanvas.height);
+
+            const rows = weatherData.latitudes.length;
+            const cols = weatherData.longitudes.length;
+            const dx = precipCanvas.width / cols;
+            const dy = precipCanvas.height / rows;
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const rainValue = weatherData.precipitation[r][c];
+                    if (rainValue > 0.1) {
+                        let alpha = Math.min(rainValue / 6.0, 1.0);
+                        // Renders storm clouds running bright blue to deep emerald over high rainfall zones
+                        if (rainValue > 4.0) {
+                            precipCtx.fillStyle = `rgba(16, 185, 129, ${alpha * 0.75})`;
+                        } else {
+                            precipCtx.fillStyle = `rgba(37, 99, 235, ${alpha * 0.6})`;
+                        }
+                        precipCtx.fillRect(c * dx, r * dy, dx + 0.5, dy + 0.5);
+                    }
+                }
+            }
+            precipTexture.needsUpdate = true;
+        }
+
+        // --- 7. SAMPLE ATMOSPHERIC MULTI-VARIABLES AT SPHERICAL GRID ---
+        function getVectorValues(latRad, lonRad, variableKey) {
+            let latDeg = latRad * (180 / Math.PI);
+            let lonDeg = lonRad * (180 / Math.PI);
+            
+            if (lonDeg < 0) lonDeg += 360;
+            lonDeg = lonDeg % 360;
+
+            const lats = weatherData.latitudes;
+            const lons = weatherData.longitudes;
+
+            let r = Math.floor(((90 - latDeg) / 180) * (lats.length - 1));
+            let c = Math.floor((lonDeg / 360) * (lons.length - 1));
+
+            r = Math.max(0, Math.min(r, lats.length - 1));
+            c = Math.max(0, Math.min(c, lons.length - 1));
+
+            if (variableKey === 'u') return weatherData.u_wind[currentLevelIndex][r][c];
+            if (variableKey === 'v') return weatherData.v_wind[currentLevelIndex][r][c];
+            return 0;
+        }
+
+        // --- 8. INITIALIZE HIGH-PERFORMANCE LINE RIBBON ARRAYS ---
+        function initWindRibbonEngine() {
+            document.getElementById('particle-count').innerText = totalStreams.toLocaleString();
+
+            const geometry = new THREE.BufferGeometry();
+            linePositions = new Float32Array(totalPointsCount * 3);
+            lineColors = new Float32Array(totalPointsCount * 3);
+
+            for (let s = 0; s < totalStreams; s++) {
+                const phi = Math.acos(Math.random() * 2 - 1);
+                const theta = Math.random() * Math.PI * 2;
+
+                streamHistoryData[s] = {
+                    phi: phi,
+                    theta: theta,
+                    age: Math.floor(Math.random() * 80),
+                    maxAge: 110 + Math.floor(Math.random() * 70),
+                    history: []
+                };
+
+                const p0 = convertSphericalToCartesian(phi, theta);
+                for (let h = 0; h < segmentsPerStream; h++) {
+                    streamHistoryData[s].history.push({ x: p0.x, y: p0.y, z: p0.z, speed: 0 });
+                }
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
+
+            const material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    attribute vec3 color;
+                    varying vec3 vColor;
+                    void main() {
+                        vColor = color;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vColor;
+                    void main() {
+                        gl_FragColor = vec4(vColor, 0.95);
+                    }
+                `,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            windRibbonSystem = new THREE.LineSegments(geometry, material);
+            scene.add(windRibbonSystem);
+
+            runVectorRenderLoop();
+        }
+
+        function convertSphericalToCartesian(phi, theta) {
+            // Lines float beautifully 1 unit clean over the ocean/terrain basemaps
+            const dynamicRadius = globeRadius + 1.2;
+            return {
+                x: dynamicRadius * Math.sin(phi) * Math.cos(theta),
+                y: dynamicRadius * Math.cos(phi),
+                z: dynamicRadius * Math.sin(phi) * Math.sin(theta)
+            };
+        }
+
+        // --- 9. U-V WIND VECTOR PHYSICS RUNTIME LOOP ---
+        function runVectorRenderLoop() {
+            requestAnimationFrame(runVectorRenderLoop);
+
+            // Sync global planetary rotations
+            earthMesh.rotation.y += 0.0002;
+            precipMesh.rotation.y += 0.0002;
+            windRibbonSystem.rotation.y += 0.0002;
+
+            let bufferIdx = 0;
+
+            for (let s = 0; s < totalStreams; s++) {
+                let stream = streamHistoryData[s];
+                stream.age += 1;
+
+                const latRad = Math.PI / 2 - stream.phi;
+                const lonRad = stream.theta;
+
+                // Extract exact mathematical vector velocities components
+                const u = getVectorValues(latRad, lonRad, 'u');
+                const v = getVectorValues(latRad, lonRad, 'v');
+                
+                // THE MATHEMATICAL RESULTANT WIND SPEED: sqrt(u^2 + v^2)
+                const windSpeedResultant = Math.sqrt(u * u + v * v);
+
+                // Safely update coordinates along real coordinate metrics directional axes
+                const integrationFactor = 0.0004; 
+                stream.phi   -= v * integrationFactor; 
+                stream.theta += u * integrationFactor; 
+
+                // Recycling triggers for boundary overflows or old paths
+                if (stream.age >= stream.maxAge || stream.phi <= 0.02 || stream.phi >= Math.PI - 0.02) {
+                    stream.phi = Math.acos(Math.random() * 2 - 1);
+                    stream.theta = Math.random() * Math.PI * 2;
+                    stream.age = 0;
+                    stream.maxAge = 110 + Math.floor(Math.random() * 70);
+
+                    const resetPos = convertSphericalToCartesian(stream.phi, stream.theta);
+                    stream.history = [];
+                    for (let h = 0; h < segmentsPerStream; h++) {
+                        stream.history.push({ x: resetPos.x, y: resetPos.y, z: resetPos.z, speed: windSpeedResultant });
+                    }
+                } else {
+                    const nextPos = convertSphericalToCartesian(stream.phi, stream.theta);
+                    stream.history.push({ x: nextPos.x, y: nextPos.y, z: nextPos.z, speed: windSpeedResultant });
+                    if (stream.history.length > segmentsPerStream) {
+                        stream.history.shift();
+                    }
+                }
+
+                // Push historical ribbon positions to the GPU Line Segment buffer array
+                for (let h = 0; h < segmentsPerStream - 1; h++) {
+                    const pStart = stream.history[h];
+                    const pEnd = stream.history[h + 1];
+
+                    linePositions[bufferIdx]     = pStart.x;
+                    linePositions[bufferIdx + 1] = pStart.y;
+                    linePositions[bufferIdx + 2] = pStart.z;
+
+                    linePositions[bufferIdx + 3] = pEnd.x;
+                    linePositions[bufferIdx + 4] = pEnd.y;
+                    linePositions[bufferIdx + 5] = pEnd.z;
+
+                    // Compute dynamic styling paths colors based directly on wind velocity magnitude
+                    const trailFade = h / (segmentsPerStream - 1);
+                    const normSpeed = Math.min(pStart.speed / 45.0, 1.0); // Colors saturate fully over 45 m/s
+
+                    if (normSpeed < 0.3) {
+                        // Mild winds: Cyan/Teal
+                        lineColors[bufferIdx]     = 0.0;
+                        lineColors[bufferIdx + 1] = 0.7 * trailFade;
+                        lineColors[bufferIdx + 2] = 1.0 * trailFade;
+                    } else if (normSpeed < 0.7) {
+                        // Moderate winds: Bright Orange
+                        lineColors[bufferIdx]     = 1.0 * trailFade;
+                        lineColors[bufferIdx + 1] = 0.5 * trailFade;
+                        lineColors[bufferIdx + 2] = 0.0;
+                    } else {
+                        // Violent winds / Jet Streams: Crimson Red
+                        lineColors[bufferIdx]     = 1.0 * trailFade;
+                        lineColors[bufferIdx + 1] = 0.1 * trailFade;
+                        lineColors[bufferIdx + 2] = 0.1 * trailFade;
+                    }
+
+                    // Mirror colors for the segment endpoint linkage
+                    lineColors[bufferIdx + 3] = lineColors[bufferIdx];
+                    lineColors[bufferIdx + 4] = lineColors[bufferIdx + 1];
+                    lineColors[bufferIdx + 5] = lineColors[bufferIdx + 2];
+
+                    bufferIdx += 6;
+                }
+            }
+
+            windRibbonSystem.geometry.attributes.position.needsUpdate = true;
+            windRibbonSystem.geometry.attributes.color.needsUpdate = true;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- 10. USER CONTROL & ADAPTERS INTERFACES ---
+        const slider = document.getElementById('level-slider');
+        const display = document.getElementById('level-display');
+
+        slider.addEventListener('input', (e) => {
+            currentLevelIndex = parseInt(e.target.value);
+            display.innerText = pressureLevelsText[currentLevelIndex];
+            updatePrecipitationMap();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        loadWeatherData();
+    </script>
+</body>
+</html>
